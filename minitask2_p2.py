@@ -21,14 +21,14 @@ class EightDirSmartGap(Node):
         self.turn_prev = 0.0
         self.in_brake_zone = False
 
-        # 脱困控制参数
+        # Escape control parameters
         self.brake_start_time = None
         self.in_escape_mode = False
         self.escape_direction = 0.0
         self.escape_start_time = 0.0
-        self.escape_duration = 1.5  # 随机旋转持续时间 (s)
+        self.escape_duration = 1.5  # Random spin duration (seconds)
 
-        self.get_logger().info("✅ EightDirSmartGap (带脱困扫描) 节点已启动")
+        self.get_logger().info("✅ EightDirSmartGap (with escape scanning) node started")
 
     def scan_callback(self, msg):
         self.ranges = msg.ranges
@@ -43,7 +43,7 @@ class EightDirSmartGap(Node):
     def control_loop(self):
         vel = Twist()
 
-        # === 1. 获取八方向距离 ===
+        # === 1. Get distance readings from eight directions ===
         front = self.get_range(0)
         front_right = self.get_range(315)
         right = self.get_range(270)
@@ -53,7 +53,7 @@ class EightDirSmartGap(Node):
         left = self.get_range(90)
         front_left = self.get_range(45)
 
-        # === 2. 线速度控制 ===
+        # === 2. Linear velocity control ===
         if front < self.critical_dist:
             vel.linear.x = 0.0
         elif front < self.safe_dist:
@@ -65,7 +65,7 @@ class EightDirSmartGap(Node):
             else:
                 vel.linear.x = 0.15
 
-        # === 3. 紧急制动滞后机制 ===
+        # === 3. Emergency brake hysteresis mechanism ===
         enter_brake = 0.3
         exit_brake = 0.4
 
@@ -76,41 +76,41 @@ class EightDirSmartGap(Node):
 
         emergency_brake = self.in_brake_zone
 
-        # === 4. 脱困逻辑触发检测 ===
+        # === 4. Escape mode trigger detection ===
         now = time.time()
 
         if emergency_brake:
-            # 第一次进入紧急模式，记录时间
+            # When first entering emergency mode, start timing
             if self.brake_start_time is None:
                 self.brake_start_time = now
 
-            # 若持续 3 秒仍在紧急状态，进入随机旋转模式
+            # If still in emergency after 3 seconds, enter random rotation mode
             if not self.in_escape_mode and now - self.brake_start_time > 3.0:
                 self.in_escape_mode = True
                 self.escape_start_time = now
-                self.escape_direction = np.random.choice([-1.0, 1.0])  # -1右转, 1左转
-                self.get_logger().warn("⚠️ 启动脱困旋转: 随机方向 = %s" %
-                                       ("左" if self.escape_direction > 0 else "右"))
+                self.escape_direction = np.random.choice([-1.0, 1.0])  # -1 = right, 1 = left
+                self.get_logger().warn("⚠️ Entering escape rotation: random direction = %s" %
+                                       ("Left" if self.escape_direction > 0 else "Right"))
 
         else:
-            # 离开紧急模式，清空计时
+            # Exited emergency mode → reset timing
             self.brake_start_time = None
             self.in_escape_mode = False
 
-        # === 5. 执行脱困行为 ===
+        # === 5. Execute escape behaviour ===
         if self.in_escape_mode:
             vel.linear.x = 0.0
             vel.angular.z = 0.8 * self.escape_direction
 
-            # 如果旋转时间超过设定值，结束脱困模式
+            # Stop escape mode after rotating for a certain duration
             if now - self.escape_start_time > self.escape_duration:
                 self.in_escape_mode = False
-                self.get_logger().info("✅ 脱困扫描完成，恢复正常避障。")
+                self.get_logger().info("✅ Escape scanning completed, resuming normal avoidance.")
 
             self.pub.publish(vel)
-            return  # 跳过其余逻辑，专注于扫描
+            return  # Skip other logic during escape rotation
 
-        # === 6. 紧急制动保护（稳定版） ===
+        # === 6. Stable emergency braking behaviour ===
         if emergency_brake:
             vel.linear.x = 0.0
             diff = right - left
@@ -122,7 +122,7 @@ class EightDirSmartGap(Node):
             vel.angular.z = 0.7 * self.turn_prev + 0.3 * target_turn
             self.turn_prev = vel.angular.z
 
-        # === 7. 安全距离保护 ===
+        # === 7. Safe distance protection ===
         if not emergency_brake:
             if left < self.safe_dist:
                 safety_factor = min(1.0, (self.safe_dist - left) / self.safe_dist)
@@ -137,7 +137,7 @@ class EightDirSmartGap(Node):
                 safety_factor = min(1.0, (self.safe_dist - front_right) / self.safe_dist)
                 vel.angular.z += 0.3 * safety_factor
 
-        # === 8. 趋宽避窄策略 ===
+        # === 8. “Wider-is-better” strategy (prefer open direction) ===
         if not emergency_brake and front < self.slow_dist:
             max_range = 1.5
             left_wider = right_wider = False
@@ -158,7 +158,7 @@ class EightDirSmartGap(Node):
 
             vel.linear.x = min(vel.linear.x, 0.08)
 
-        # === 9. 基础左右差控制 ===
+        # === 9. Basic left-right differential control ===
         if not emergency_brake:
             diff_lr = right - left
             diff_frfl = front_right - front_left
@@ -175,13 +175,13 @@ class EightDirSmartGap(Node):
             vel.angular.z = 0.7 * self.turn_prev + 0.3 * vel.angular.z
             self.turn_prev = vel.angular.z
 
-        # === 10. 限制角速度范围 ===
+        # === 10. Limit angular velocity range ===
         vel.angular.z = max(min(vel.angular.z, 1.0), -1.0)
 
-        # === 11. 发布命令 ===
+        # === 11. Publish control command ===
         self.pub.publish(vel)
 
-        # 调试输出
+        # Debug output
         self.get_logger().info(
             f"Front={front:.2f}, FL={front_left:.2f}, FR={front_right:.2f}, "
             f"L={left:.2f}, R={right:.2f}, v={vel.linear.x:.2f}, turn={vel.angular.z:.2f}, "
