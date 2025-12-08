@@ -1,0 +1,9 @@
+# Ignore everything
+*
+
+# But keep these folders:
+!nav_package/
+!eye_package/
+
+# Also keep gitignore itself
+!.gitignore
